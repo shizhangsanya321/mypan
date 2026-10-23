@@ -1,0 +1,56 @@
+# ============================================================
+# Fork 自动同步上游 · desstg/mypan → 你的 fork
+#
+# 放置位置（在你的 fork 仓库里新建这个文件）：
+#   .github/workflows/sync-upstream.yml
+#
+# 作用：每天自动把上游 desstg/mypan 的 main 分支新提交合并进 fork 的 main。
+# 方式是 merge（不是强推覆盖）：你在 fork 里自己的提交不会丢；
+# 只有真冲突时任务会标红失败，到时去 fork 页面点一次 Sync fork 或本地处理即可。
+# ============================================================
+
+name: Sync upstream (同步上游)
+
+on:
+  schedule:
+    # 每天 UTC 02:23 ≈ 北京时间 10:23。想改频率改这行 cron 即可，
+    # 例如每 6 小时：'23 */6 * * *'
+    - cron: '23 2 * * *'
+  workflow_dispatch:        # 允许在 Actions 页手动点 Run workflow 立即同步一次
+
+# 推送需要 contents 写权限；workflows 写权限用于上游改了它自己的
+# .github/workflows 文件时也能一并同步过来（否则那一步会被 GitHub 拒）
+permissions:
+  contents: write
+  workflows: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          # 如果你在仓库 Secrets 里建了 UPSTREAM_SYNC_TOKEN（PAT，repo+workflow 权限），
+          # 自动优先用它；没有就用内置 GITHUB_TOKEN，一般也够。
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Merge upstream
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/desstg/mypan.git
+          git fetch upstream main
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "已是最新，无需同步。"
+            exit 0
+          fi
+          git merge upstream/main --no-edit
+          git push origin main
+          echo "同步完成：已合入上游最新提交。"
