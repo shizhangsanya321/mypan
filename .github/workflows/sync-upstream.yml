@@ -18,11 +18,13 @@ on:
     - cron: '23 2 * * *'
   workflow_dispatch:        # 允许在 Actions 页手动点 Run workflow 立即同步一次
 
-# 推送需要 contents 写权限；workflows 写权限用于上游改了它自己的
-# .github/workflows 文件时也能一并同步过来（否则那一步会被 GitHub 拒）
+# 推送只需要 contents 写权限。
+# 注意：不要在这里加 workflows 权限——GITHUB_TOKEN 的权限表里没有这个键，
+# 写了整个工作流会被 GitHub 判为无效文件、根本跑不起来（v1 就栽在这）。
+# 上游改了它自己的 .github/workflows 文件时，内置令牌推送可能被拒，
+# 那种情况按说明建 UPSTREAM_SYNC_TOKEN（PAT）即可，下面会自动优先用它。
 permissions:
   contents: write
-  workflows: write
 
 concurrency:
   group: sync-upstream
