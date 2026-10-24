@@ -87,7 +87,7 @@
 
 ## 快速开始
 
-**Docker Compose 部署** · 镜像标签：`latest` 或指定 `v2.9.6`
+**Docker Compose 部署** · 镜像标签：`latest` 或指定 `v2.9.7`
 
 ### 一、先确认共享挂载已开启（用到 FUSE 挂载才需要）
 
@@ -217,7 +217,12 @@ services:
     volumes:
       - ./data/pansou-cache:/app/cache
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8888/api/health"]
+      # ⚠️ 配了 http_proxy（给 TG 频道用）时**不能**写成裸的 wget。
+      # alpine 自带的 busybox wget **只读 http_proxy、完全不认 no_proxy**，
+      # 于是这句自检会被送进代理，代理去连它自己的 localhost:8888 → 502，
+      # 容器被标成 unhealthy。日志里就是
+      # `wget: server returned error: HTTP/1.1 502 Bad Gateway`。
+      test: ["CMD-SHELL", "http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= wget -q --spider http://127.0.0.1:8888/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -238,7 +243,7 @@ services:
 每个 Release 的 Assets 里都有一个 `mypan-<版本>-windows-amd64.exe`（Windows 10/11 x64）：
 
 ```bat
-mypan-v2.9.6-windows-amd64.exe --listen 0.0.0.0:5211 --data-dir "D:\mypan\data"
+mypan-v2.9.7-windows-amd64.exe --listen 0.0.0.0:5211 --data-dir "D:\mypan\data"
 ```
 
 数据（数据库、日志、STRM 输出）默认落在 exe 同级的 `data` 与 `strm` 目录，建议用
@@ -289,8 +294,8 @@ docker compose up -d          # mypan + pansou 一起起
 | 标签 | 说明 |
 |---|---|
 | `latest` | 最新发布版 |
-| `v2.9.6` | 固定版本 |
-| `v2.9.4` | 上一版固定版本 |
+| `v2.9.7` | 固定版本 |
+| `v2.9.6` | 上一版固定版本 |
 
 **默认只构建 `linux/amd64`。** 绝大多数 NAS（群晖、威联通、自建 x86）都是这个架构。
 需要 ARM 版时请在 Actions 里手动触发并填写 `linux/amd64,linux/arm64` ——
