@@ -61,6 +61,14 @@ const maleCount = ref(0);
 const showMale = ref(false);
 const loading = ref(false);
 const loadingMore = ref(false);
+/**
+ * 后端回 `building` 时置上：索引正在**后台**建，这一页是空的但**墙上不一定没有演员**。
+ *
+ * 后端这么收口是因为这份索引要读遍墙上的侧车 / nfo（SMB 上实测两分钟出头）——
+ * 同步做，群晖反代早就判超时回了 502（用户 2026-10-24 报的正是这个）。
+ * 所以这里必须显示「正在整理」并轮询，绝不能把空表当成「一位演员都没有」。
+ */
+const building = ref(false);
 const error = ref("");
 const keywordInput = ref("");
 const keyword = ref("");
@@ -142,10 +150,110 @@ async function runAvatarFill(pending: JavWallActorCard[], seq: number) {
  */
 let loadSeq = 0;
 
+// —————————————————— 「正在整理」时的轮询 ——————————————————
+//
+// 后端把索引建在后台（两分钟量级，见 javwall_actor_index.go），所以第一次打开
+// 拿到的是 `building: true` + 空表。这里轮询到它建好为止，**期间不算加载失败、
+// 更不算「没有演员」**。
+let buildingTimer: ReturnType<typeof setTimeout> | null = null;
+/** 已经等了多久 —— 只用来把轮询间隔慢慢放长（建得越久，越不急着问）。 */
+let buildingWaitedMs = 0;
+const BUILDING_FIRST_POLL_MS = 2_000;
+const BUILDING_MAX_POLL_MS = 8_000;
+/**
+ * 等多久就不再干等了。
+ *
+ * 后台建一次的预算是 10 分钟（见 javwall_actor_index.go），但让用户盯着
+ * 「正在整理」十分钟没有意义：多半是那面墙（网盘 / SMB）真的不通。5 分钟后
+ * 改成一句人能动手的话 —— 关掉重开一次，会比继续转圈有用。
+ */
+const BUILDING_GIVE_UP_MS = 5 * 60_000;
+
+function clearBuildingPoll() {
+  buildingWaitedMs = 0;
+  if (buildingTimer) {
+    clearTimeout(buildingTimer);
+    buildingTimer = null;
+  }
+}
+
+function scheduleBuildingPoll() {
+  if (buildingTimer) return;
+  if (buildingWaitedMs >= BUILDING_GIVE_UP_MS) {
+    // 等太久了：不再转圈，给一句能动手的话。后台那一轮照旧在跑（它有自己的
+    // 10 分钟预算），用户关掉重开时多半正好撞上它建完。
+    building.value = false;
+    error.value = "演员资料整理超时了（那面墙可能暂时连不上）。过一会儿关掉重开一次试试。";
+    return;
+  }
+  const delay = Math.min(
+    BUILDING_FIRST_POLL_MS * Math.pow(1.5, Math.floor(buildingWaitedMs / BUILDING_FIRST_POLL_MS)),
+    BUILDING_MAX_POLL_MS,
+  );
+  buildingTimer = setTimeout(() => {
+    buildingTimer = null;
+    buildingWaitedMs += delay;
+    if (!props.open || !building.value) return;
+    void pollWhileBuilding();
+  }, delay);
+}
+
+/** 只问一句「建好了没」：不碰 `loading`（否则整页每几秒闪一次「加载中」）。 */
+async function pollWhileBuilding() {
+  const seq = loadSeq;
+  try {
+    const res = await fetchJavWallActors({
+      keyword: keyword.value,
+      page: 1,
+      page_size: PAGE_SIZE,
+      include_male: showMale.value,
+      anchor: anchorKey.value || undefined,
+    });
+    if (seq !== loadSeq || !props.open) return;
+    if (res.building) {
+      scheduleBuildingPoll();
+      return;
+    }
+    // 建好了：走一次正常 reload，把网格 / 补头像 / 哨兵那一套完整铺开。
+    void reload();
+  } catch {
+    // 网络抖一下不算失败：下一拍接着问（真失败时 reload 会给出错误）。
+    if (seq === loadSeq && props.open) scheduleBuildingPoll();
+  }
+}
+
 const hasMore = computed(() => items.value.length < total.value);
 
 /** 影片详情抽屉（点演员详情里的一部片 → 那一面墙自己的详情抽屉）。 */
 const wall = useWallDetail();
+
+/**
+ * 播放期间演员详情是不是被我们收起来了（关掉播放窗要放回来）。
+ *
+ * 这一页的路径是「演员墙 → 演员详情 → 点一部片 → 影片详情 → 播放」：播放时
+ * `useWallDetail.play()` 只收起**影片详情**自己那层（见那边的 suspendedByPlayer），
+ * 而演员详情同样是 elevated（10040），照样压在全屏播放窗（10000）上面 ——
+ * 用户看到的就是「播放页被详情页挡住了」（用户 2026-10-24 报的）。
+ *
+ * ⚠️ 别去抬播放窗的 z-index：`.file-preview` 的 10000 是全局外壳刻意的档位
+ * （低于 --z-dropdown，好让下拉菜单浮在预览之上），抬它会波及所有预览场景。
+ *
+ * 只切「收不收起」、**不动 `detailOpen`**：关掉 `open` 会把已取的影片与资料整份
+ * 清掉（见抽屉里 `suspended` 那条），关掉播放窗后用户会看到一整页重新加载。
+ */
+const actorSuspendedByPlayer = ref(false);
+
+watch(
+  () => wall.playerOpen.value,
+  (playing) => {
+    if (playing) {
+      if (!detailOpen.value) return;
+      actorSuspendedByPlayer.value = true;
+      return;
+    }
+    actorSuspendedByPlayer.value = false;
+  },
+);
 
 // —————————————————— 浮层的开关：Esc / 锁滚动 ——————————————————
 const myToken = Symbol("jav-wall-actors");
@@ -262,6 +370,8 @@ watch(
       total.value = 0;
       totalPage.value = 0;
       maleCount.value = 0;
+      building.value = false;
+      clearBuildingPoll();
       // 每次打开都回到默认口径（不列男优）—— 上次勾上的状态不该带到下一次。
       showMale.value = false;
       // 补头像的「已试过」记录也一并清掉：后端那份资料 24h 缓存，重开时再补一遍
@@ -269,6 +379,8 @@ watch(
       avatarFillTried.clear();
       error.value = "";
       detailOpen.value = false;
+      // 上一轮「播放时收起演员详情」的标记不带到这一次（整页浮层是新的）。
+      actorSuspendedByPlayer.value = false;
       wall.close();
       openLayer();
       void reload();
@@ -278,6 +390,9 @@ watch(
     closeDetail();
     // 浮层整块被卸载：观察器连同它盯着的哨兵一起作废（重开是新的 DOM）。
     disconnectSentinel();
+    // 关掉就停止轮询：用户已经不在看了，没必要每隔几秒问一次后台。
+    clearBuildingPoll();
+    building.value = false;
     closeLayer();
   },
 );
@@ -285,6 +400,7 @@ watch(
 onBeforeUnmount(() => {
   // 组件没了，在途的补头像结果不该再往任何地方写。
   avatarFillSeq++;
+  clearBuildingPoll();
   wall.close();
   closeDetail();
   closeLayer();
@@ -312,6 +428,7 @@ async function reload() {
   loading.value = true;
   loadingMore.value = false;
   error.value = "";
+  clearBuildingPoll();
   try {
     const res = await fetchJavWallActors({
       keyword: keyword.value,
@@ -321,6 +438,7 @@ async function reload() {
       anchor: anchorKey.value || undefined,
     });
     if (seq !== loadSeq) return;
+    building.value = !!res.building;
     items.value = res.items ?? [];
     total.value = res.total ?? 0;
     totalPage.value = res.total_page ?? 0;
@@ -330,6 +448,7 @@ async function reload() {
     if (scrollEl.value) scrollEl.value.scrollTop = 0;
   } catch (e) {
     if (seq !== loadSeq) return;
+    building.value = false;
     items.value = [];
     total.value = 0;
     error.value = getApiErrorMessage(e, "加载演员列表失败");
@@ -346,6 +465,12 @@ async function reload() {
   loading.value = false;
   await nextTick();
   if (seq !== loadSeq) return;
+  if (building.value) {
+    // 索引还在后台建：这一页是空的，但那是**还没有**，不是**没有**。
+    // 只轮询，不挂哨兵（没东西可翻），也不补头像（一位都没有）。
+    scheduleBuildingPoll();
+    return;
+  }
   bindSentinel();
   scheduleAvatarFill();
 }
@@ -483,6 +608,17 @@ onBeforeUnmount(() => {
 
       <div ref="scrollEl" class="jav-wall-actors__body">
         <div v-if="loading" class="jav-empty">加载中…</div>
+        <!-- 索引在后台建（第一次打开 / 墙刚变过）。第一次要读遍整面墙的侧车与 nfo，
+             网盘 / SMB 上是一两分钟的事 —— 这里必须说「正在整理」并等，
+             ⚠️ 绝不能掉进下面那个「一位演员都没有」的分支（那是本项目最老的坑）。 -->
+        <div v-else-if="building" class="jav-empty">
+          <div class="jav-empty__icon">⏳</div>
+          <div>正在整理墙上的演员资料…</div>
+          <div class="jav-wall-actors__hint">
+            第一次打开要把每部片的侧车与 nfo 读一遍，网盘上大概一两分钟。<br />
+            建好之后会自己出来，不用刷新页面。
+          </div>
+        </div>
         <div v-else-if="error" class="jav-empty">
           <div class="jav-empty__icon">⚠️</div>
           <div>{{ error }}</div>
@@ -557,6 +693,7 @@ onBeforeUnmount(() => {
 
       <JavWallActorDetailDrawer
         :open="detailOpen"
+        :suspended="actorSuspendedByPlayer"
         :actor="detailActor"
         :raised="!wall.open.value"
         searchable
@@ -809,6 +946,14 @@ onBeforeUnmount(() => {
   text-align: center;
   color: var(--text-muted);
   font-size: 12px;
+}
+
+/* 「正在整理」下面那句解释：比正文淡一档，别抢标题。 */
+.jav-wall-actors__hint {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.7;
 }
 
 @media (max-width: 560px) {

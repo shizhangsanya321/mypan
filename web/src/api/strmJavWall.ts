@@ -490,10 +490,10 @@ export function deleteJavWallItem(ref: number | WallSourceRef, relDir: string, s
 /** 演员墙上的一个卡片。 */
 export interface JavWallActorCard {
   /**
-   * 详情要原样带回来的标识：有上游 id 就是 id，否则 `name:<小写名字>`。
+   * 详情要原样带回来的标识：有上游 id 就是 id，否则 `name:<小写规范名>`。
    *
    * ⚠️ 与 `name` 不是一回事：`name` 会被索引表换成**中文统一名**，`key` 仍然是
-   * 聚合时用的那个键（id 或侧车里的原始名字）。
+   * 聚合时用的那个键（上游 id，或索引表的规范名）。
    */
   key: string;
   /** 上游演员 id，空串 = 只在 nfo 里见过这个名字。 */
@@ -565,6 +565,16 @@ export interface JavWallActorListResult {
    * 没有这个数，那种情况会显示成「一条演员都没有」，看着像坏了。
    */
   male_count?: number;
+  /**
+   * 索引还在**后台**建（第一次打开、或者墙刚变过）。
+   *
+   * ⚠️ 这时 `items` 是空的，但**不代表墙上没有演员** —— 必须显示「正在整理」并
+   * 轮询，否则用户看到的是「一位演员都没有」，会以为数据丢了（本项目的老坑）。
+   *
+   * 后端这么设计是因为这份索引要读整面墙的侧车 / nfo：SMB 上实测两分钟出头，
+   * 同步做必然被群晖反代判超时（502）。
+   */
+  building?: boolean;
 }
 
 export interface JavWallActorDetailResult {
