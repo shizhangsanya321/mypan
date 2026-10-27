@@ -211,6 +211,35 @@ export interface JavListResult {
   total_page: number;
 }
 
+/**
+ * 按实体搜出来的一个候选（演员 / 系列 / 片商 / 导演 / 清单）。
+ *
+ * 这**不是**影片 —— 点进去才看这个实体的作品。与 JavMovieCard 是两回事，
+ * 别为了省一个类型把它们塞进同一个数组。
+ */
+export interface JavEntity {
+  id: string;
+  name: string;
+  /**
+   * 它是什么：`actor` / `series` / `maker` / `director` / `lists`。
+   *
+   * 清单这里是**复数** `lists`（界面口径，全模块统一），上游用的单数是服务层
+   * 翻译的细节，前端不必知道。
+   */
+  kind: JavEntityKind;
+  /** 头像。只有演员有，而且必须过 javImageURL（上游是 XOR 混淆的）。 */
+  avatar_url: string;
+  /** 这个实体有多少部作品。清单读 movies_count、其余读 videos_count，后端已归一。 */
+  count: number;
+  /** 清单的可见性（open / private），其余档为空串。 */
+  privacy: string;
+  /** 上游性别码：1 = 男优。只有演员有值。 */
+  gender: number;
+}
+
+/** 能被「按实体搜」的几档。清单是 `lists`（界面口径）。 */
+export type JavEntityKind = "actor" | "series" | "maker" | "director" | "lists";
+
 /** 榜单种类。 */
 export type JavRankingKind = "top250" | "daily" | "weekly" | "monthly" | "actor";
 
@@ -251,6 +280,15 @@ export interface JavSubscription {
   pre_download: boolean;
   /** 把影片评论区里分享的链接也纳入自动推送的候选。默认关。 */
   include_comment_links: boolean;
+  /**
+   * 评论区里的 **LTX 资源**怎么挑：`""` 不启用 / `"prefer"` 优先 / `"only"` 仅 LTX。
+   *
+   * 与 `include_comment_links` 正交，但**有前提**：必须同时勾了「破解」质量
+   * 且开着评论区链接，后端才认（quality.normalizeLTXMode 会把不满足前提的归成 `""`）。
+   *
+   * 三态字符串而不是两个 bool：「二选一 + 都不选」本身就是三态。
+   */
+  ltx_mode: string;
   qualities: string[];
   min_size_mb: number | null;
   max_size_mb: number | null;
@@ -289,6 +327,8 @@ export interface JavSubscriptionInput {
   pre_download: boolean;
   /** 把影片评论区里分享的链接也纳入自动推送的候选。默认关。 */
   include_comment_links: boolean;
+  /** LTX 策略，见 JavSubscription.ltx_mode。不传 = 不改 / 新增时为空。 */
+  ltx_mode?: string;
   qualities: string[];
   min_size_mb?: number | null;
   max_size_mb?: number | null;
@@ -336,6 +376,13 @@ export interface JavCandidate {
   codec_label: string;
   /** 这颗资源来自**影片评论区的用户分享**，而不是 JAVBUS 磁链表。 */
   from_comment: boolean;
+  /**
+   * 这颗资源是 **LTX 修复版**（链接自带的文件名里带 LTX 标记）。
+   *
+   * 判定只看链接里的文件名（磁链 `dn=` / ed2k 的文件名），不看评论正文。
+   * 不参与打分，只决定「LTX 优先 / 仅 LTX」这两条策略挑不挑它。
+   */
+  ltx: boolean;
 }
 
 export interface JavCheckResult {
@@ -536,6 +583,14 @@ export interface JavConfig {
   api_base: string;
   api_nodes: JavAPINode[];
   javbus_base: string;
+  /**
+   * JAVDB **官网**地址（与 api_base 是两个域名）。
+   *
+   * 只有「清单里的影片」与「演员/系列/片商/导演的作品」两档用得上 ——
+   * 它们都得抓官网 HTML（上游 API 没有「按 id 取作品」的接口）。
+   * 空串表示用内置默认（镜像域名 javdb580.com）。
+   */
+  site_base: string;
   use_proxy: boolean;
   /** 用户自己配了代理并且开着（仅供开关回显）。 */
   proxy_ready: boolean;
@@ -591,6 +646,7 @@ export interface JavConfigInput {
   token?: string;
   api_base?: string;
   javbus_base?: string;
+  site_base?: string;
   use_proxy?: boolean;
   min_interval_ms?: number;
   request_gap_ms?: number;
@@ -733,6 +789,18 @@ export const JAV_SUBFOLDER_MODES = [
   { value: "code", label: "按番号（SSIS-001/）" },
   { value: "title", label: "按片名" },
   { value: "none", label: "不建子目录" },
+] as const;
+
+/**
+ * LTX 策略的两颗胶囊。**二选一**，且都可以不选（= 不启用）。
+ *
+ * 只有同时满足「勾了破解质量」+「开了评论区链接」才可用 —— 那两条判据在
+ * `JavSubscribePanel.vue` 的 `ltxAvailable` 里，后端同一个判据在
+ * `quality.normalizeLTXMode`。
+ */
+export const JAV_LTX_MODES = [
+  { value: "prefer", label: "LTX 优先" },
+  { value: "only", label: "仅 LTX" },
 ] as const;
 
 /** 把 download_mode + pre_download 合成三档，与后端 SubscriptionMode 同一套规则。 */

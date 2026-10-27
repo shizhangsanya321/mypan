@@ -1106,6 +1106,15 @@
   line-height: 1.3;
 }
 
+/* 实体候选卡片底部那行「N 部作品」。
+   系列 / 片商 / 导演 / 清单都没有头像图，圆里只有两个字 —— 光靠名字看不出
+   「这个系列有多少片」，而它正是用户点进去之前想知道的（同名系列不少）。 */
+.jav-entity-count {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+
 /* ————————————————— 筛选与排序条 ————————————————— */
 
 .jav-filters {
@@ -1157,6 +1166,20 @@
   border-color: var(--brand);
   color: var(--brand);
   font-weight: 600;
+}
+
+/* 禁用态。`.jav-sort-chip` 此前只用在「永远能点」的排序 / 筛选项上，所以没有这一条；
+ * 订阅弹窗里的「LTX 优先 / 仅 LTX」是第一次出现「有前提才可点」的胶囊 ——
+ * 不写的话浏览器只把字稍微变灰，边框与底色照旧，看起来仍然能点。
+ * `:hover` 那条也要压住：它比 `:disabled` 更靠前，不禁用就会在悬停时亮起品牌色。 */
+.jav-sort-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.jav-sort-chip:disabled:hover {
+  border-color: var(--border);
+  color: var(--text-muted);
 }
 
 /* 弹窗右上角的关闭键。形态照 AppModal 的 .modal__close（新建整理任务那类弹窗用的
@@ -1568,6 +1591,21 @@
   font-weight: 600;
   letter-spacing: 0.02em;
   flex-shrink: 0;
+}
+
+/* LTX 修复版的小胶囊，紧挨着番号（抽屉信息条那一行）。
+ *
+ * 与旁边那颗番号胶囊是**同一个词族**：形状一致、颜色换成低饱和的危险色系，
+ * 一眼读成「番号 + 一个附加标记」。字号比番号小一档 —— 它是形容词，不是名字。
+ * 卡片上那颗 `.jav-wall__ltx` 用的是同一组色值（那边在 StrmJavWall 的 scoped
+ * 样式里，跨组件够不到这里），改色时两边一起改。 */
+.jd-num--ltx {
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.14);
 }
 
 .jd-badge {
