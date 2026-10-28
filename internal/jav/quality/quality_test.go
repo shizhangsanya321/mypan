@@ -265,9 +265,10 @@ func TestIsUncensoredBoundaries(t *testing.T) {
 
 // TestIsLTX 钉住「LTX 修复版」的判据。
 //
-// 真样本取自用户 2026-10-27 给的那三条 —— 它们的共同点是 **LTX 永远是一个独立的
-// token**（前面是 `_` / `.` / `-`）。所以负样本的重点是「连写的三个字母不算」：
-// `LXTA-001` 是番号前缀、`planet`/`xltx` 里 ltx 分别是词的一部分。
+// 真样本取自用户 2026-10-27 给的那三条 + 真机测试时从真库里捞到的两条 ——
+// 它们的共同点是候选名里 `ltx` 三连写，**前后只被字母挡得住**：`_LTX` / `.LTX` / `-LTX`
+// 是常见形态，`451LTX` / `LTX0.11.2` 这种**紧贴数字**的也是真样本（2026-10-27 补）。
+// 所以负样本只剩「连在字母里」这一种：`LXTA-001` 番号前缀、`planet`、`xltx`。
 func TestIsLTX(t *testing.T) {
 	yes := []string{
 		"www.98T.la@MISM-305_LTX.mp4",
@@ -276,6 +277,11 @@ func TestIsLTX(t *testing.T) {
 		"SSIS-001-LTX.mkv",
 		// 大小写不敏感：分享者两种写法都有。
 		"JUR-890 ltx_restored.mp4",
+		// 2026-10-27 真机从真库捞到的两条：LTX 紧贴数字/后面紧跟版本号，
+		// 原来的 `[^a-z0-9]` 边界把它们判否了（8865 条链接里仅有的 4 条漏判）。
+		"PPPD-451LTX.mp4",
+		"www.98T.la@PFES-00065_rfdetr-v6LTX.mp4",
+		"LTX0.11.2破解",
 	}
 	for _, name := range yes {
 		if !IsLTX(name) {
@@ -297,14 +303,18 @@ func TestIsLTX(t *testing.T) {
 	}
 }
 
-// TestLTXMarked 钉住「从链接本体取名字」这条判据 —— 用户 2026-10-27 选的
-// 「只看链接自带的文件名」。评论正文里写 LTX 不算，链接名里写才算。
+// TestLTXMarked 钉住 LTX 的三处判据：链接自带的文件名、展示名、评论正文。
+//
+// 2026-10-27 用户改口：原先正文不算（只看链接文件名），实测大量分享者只在正文里
+// 写「最新 LTX 模型」而链接名保持原样（PRWF-017 那条），于是正文也算，且**不加开关**。
+// 下面「正文里写了 LTX」那两条就是这次改口的守门用例。
 func TestLTXMarked(t *testing.T) {
 	const btih = "magnet:?xt=urn:btih:" + "0123456789abcdef0123456789abcdef01234567"
 	cases := []struct {
 		name        string
 		uri         string
 		display     string
+		body        string
 		fromComment bool
 		want        bool
 	}{
@@ -320,13 +330,26 @@ func TestLTXMarked(t *testing.T) {
 		},
 		{name: "磁链 dn= 不带但展示名带（非评论来源）", uri: btih, display: "MISM-305_LTX.mp4", want: true},
 		{
-			name: "评论链接、dn= 不带 LTX，正文里写了 LTX",
-			uri:  btih + "&dn=MISM-305.mp4", display: "MISM-305.mp4 这个有 LTX 修复版",
-			fromComment: true, want: false,
+			name: "评论链接、dn= 不带 LTX，正文里写了 LTX → 算",
+			uri:  btih + "&dn=MISM-305.mp4", display: "MISM-305.mp4",
+			body: "高金自购最新LTX模型敬请取用", fromComment: true, want: true,
 		},
 		{
-			name: "评论链接认不出文件名时展示名退成正文 —— 不因此判是 LTX",
-			uri:  btih, display: "LTX", fromComment: true, want: false,
+			name: "评论链接认不出文件名时展示名退成正文 → 算",
+			uri:  btih, display: "LTX", fromComment: true, want: true,
+		},
+		{
+			// 用户 2026-10-27 给的真样本：ed2k 名里没有 ltx，正文里写着。
+			name:        "用户真样本 PRWF-017：正文写 LTX、ed2k 名不带",
+			uri:         "ed2k://|file|www.98T.la@PRWF-017_restored.mp4|10386185950|fda5ff6df60eadadc551a96922d64fc4|/",
+			display:     "www.98T.la@PRWF-017_restored.mp4",
+			body:        "给我看代入了…杰伦你别动我老婆😭 /＊/高金自购最新LTX模型敬请取用",
+			fromComment: true, want: true,
+		},
+		{
+			// 正文只在**评论来源**时才看：磁链表没有正文，传进来也不认。
+			name: "非评论来源时正文不算", uri: btih, display: "MISM-305.mp4",
+			body: "最新LTX模型", fromComment: false, want: false,
 		},
 		{
 			name:    "ed2k 的文件名字段带 LTX",
@@ -334,16 +357,135 @@ func TestLTXMarked(t *testing.T) {
 			display: "www.98T.la@JUR-890 七海蒂娜 LTX_restored.mp4", fromComment: true, want: true,
 		},
 		{
-			name:    "ed2k 文件名不带 LTX，评论正文里写了",
+			name:    "ed2k 文件名与正文都没有 LTX",
 			uri:     "ed2k://|file|JUR-890_restored.mp4|7708397628|A3A0C10669347894F9C0E94217835241|/",
-			display: "LTX 这一部", fromComment: true, want: false,
+			display: "JUR-890_restored.mp4", body: "这一部不错", fromComment: true, want: false,
 		},
-		{name: "什么都没有", uri: "", display: "", want: false},
+		{name: "什么都没有", uri: "", display: "", body: "", want: false},
 	}
 	for _, c := range cases {
-		if got := LTXMarked(c.uri, c.display, c.fromComment); got != c.want {
-			t.Errorf("%s：LTXMarked(%q, %q, %v) = %v, want %v",
-				c.name, c.uri, c.display, c.fromComment, got, c.want)
+		if got := LTXMarked(c.uri, c.display, c.body, c.fromComment); got != c.want {
+			t.Errorf("%s：LTXMarked(%q, %q, %q, %v) = %v, want %v",
+				c.name, c.uri, c.display, c.body, c.fromComment, got, c.want)
+		}
+	}
+}
+
+// TestLTXMarkedNegation 钉住「正文里的 LTX 被否定/求片语境包着时判否」。
+//
+// 2026-10-28 用户拍板加的。真误判只有一条（群晖库、movie=5EZM6D）：
+//
+//	4KLADA破解，坐等LTX ed2k://|file|www.98T.la@MIDV-433-U.mp4|…
+//
+// 意思是「我等着 LTX 版」，贴的却是普通版；配上「仅 LTX」会把这座普通版推出去。
+//
+// 两条**绝对不能被这条闸碰到**：
+//   - 链接自带文件名里有 LTX（那是发布者对文件的标注，正文说什么都不能推翻）；
+//   - 「最新LTX」这类含「新」的**肯定**说法（真库里最常见的写法）。
+func TestLTXMarkedNegation(t *testing.T) {
+	const btih = "magnet:?xt=urn:btih:" + "0123456789abcdef0123456789abcdef01234567"
+	// 真样本：群晖库 5EZM6D，链接名里没有 LTX。
+	const plain4k = "ed2k://|file|www.98T.la@MIDV-433-U.mp4|28277487747|14A8E509C8597BC9AA035CAB5B0C241A|/"
+	cases := []struct {
+		name        string
+		uri         string
+		display     string
+		body        string
+		fromComment bool
+		want        bool
+	}{
+		// —— 该判否的 ——
+		{
+			name: "真样本 5EZM6D：坐等LTX，贴的是普通版", uri: plain4k,
+			display: "www.98T.la@MIDV-433-U.mp4", body: "4KLADA破解，坐等LTX", fromComment: true, want: false,
+		},
+		{
+			name: "求 LTX 版，贴的是普通版", uri: plain4k,
+			display: "www.98T.la@MIDV-433-U.mp4", body: "求LTX版本", fromComment: true, want: false,
+		},
+		{
+			name: "这个不是LTX吧", uri: plain4k,
+			display: "www.98T.la@MIDV-433-U.mp4", body: "这个不是LTX吧，假的", fromComment: true, want: false,
+		},
+		{
+			name: "没有LTX吗", uri: plain4k,
+			display: "www.98T.la@MIDV-433-U.mp4", body: "有没有LTX吗", fromComment: true, want: false,
+		},
+		{
+			name: "LTX吧（后界提问）", uri: plain4k,
+			display: "www.98T.la@MIDV-433-U.mp4", body: "这算LTX吧", fromComment: true, want: false,
+		},
+		// —— 绝不能被误伤的 ——
+		{
+			name: "最新LTX 是真样本最常见的肯定写法", uri: plain4k,
+			display: "www.98T.la@MIDV-433-U.mp4", body: "高金自购最新LTX模型敬请取用", fromComment: true, want: true,
+		},
+		{
+			name: "LTX 前面只是图解语气词，不算否定", uri: plain4k,
+			display: "www.98T.la@MIDV-433-U.mp4", body: "孩子们，这不是白上咲花😭LTX :", fromComment: true, want: true,
+		},
+		{
+			name: "LTX搬运（转贴 LTX 版，是肯定）", uri: plain4k,
+			display: "www.98T.la@MIDV-433-U.mp4", body: "LTX搬运", fromComment: true, want: true,
+		},
+		{
+			// 关键：链接自带的文件名是权威，正文的否定推翻不了它。
+			name: "链接名带 LTX，正文说不是 LTX → 仍算",
+			uri:  "ed2k://|file|www.98T.la@MIDV-433-U-LTX.mp4|28277487747|14A8E509C8597BC9AA035CAB5B0C241A|/",
+			display: "www.98T.la@MIDV-433-U-LTX.mp4",
+			body:    "这个不是LTX吧", fromComment: true, want: true,
+		},
+		{
+			// 磁链 dn= 同理：正文（这里本来也不看）怎么否定都不影响。
+			name: "磁链 dn= 带 LTX，正文否定 → 仍算",
+			uri:  btih + "&dn=MIDV-433-U-LTX.mp4", display: "MIDV-433-U-LTX.mp4",
+			body: "求LTX版本", fromComment: true, want: true,
+		},
+		{
+			// 否定词隔得远就不是对同一个词的态度：一条评论里既求又发是常态。
+			name: "否定词离得远（超过 8 字）不算否定", uri: plain4k,
+			display: "www.98T.la@MIDV-433-U.mp4",
+			body:    "求一下这部片的字幕，另外这个是LTX修复版", fromComment: true, want: true,
+		},
+	}
+	for _, c := range cases {
+		if got := LTXMarked(c.uri, c.display, c.body, c.fromComment); got != c.want {
+			t.Errorf("%s：LTXMarked(%q, %q, %q, %v) = %v, want %v",
+				c.name, c.uri, c.display, c.body, c.fromComment, got, c.want)
+		}
+	}
+}
+
+// TestLTXNegatedTokenPosition 钉住 ltxNegated 的位置计算。
+//
+// reLTX 的边界类 `(?:^|[^a-z])` 会把前一个字符**吃进 match**，
+// 所以直接拿 m.start() 截上下文会截到边界字符（`坐等LTX` 截到 `等` 前面的 `坐`），
+// `等\s*$` 这种前缀永远匹配不上 —— 第一版正是这么写的，真库上测出 0 条判否。
+func TestLTXNegatedTokenPosition(t *testing.T) {
+	negated := []string{
+		"坐等LTX",       // 前界把「等」吃进 match 的典型
+		"坐等 LTX",      // 带空格
+		"求LTX",
+		"不是LTX",
+		"没有LTX",
+		"LTX吧",
+		"LTX吗",
+	}
+	notNegated := []string{
+		"最新LTX",
+		"LTX搬运",
+		"隔壁4k画质的ltx破解",
+		"LTX模型破解堪比无码",
+		"",
+	}
+	for _, s := range negated {
+		if !ltxNegated(s) {
+			t.Errorf("%q 应判为否定", s)
+		}
+	}
+	for _, s := range notNegated {
+		if ltxNegated(s) {
+			t.Errorf("%q 不该判为否定", s)
 		}
 	}
 }
