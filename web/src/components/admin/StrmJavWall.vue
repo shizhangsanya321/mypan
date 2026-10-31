@@ -738,6 +738,10 @@ const onlineProgress = ref<{ done: number; total: number } | null>(null);
 /**
  * 「在线刮削」那颗按钮的文案。
  *
+ * **按钮上叫「开始刮削」**（用户 2026-10-31 要求与影视墙那颗统一）：改的只是**文字**，
+ * 底下的接口、参数、禁用语义一样没动 —— 那几个 `在线刮削` 字样（确认弹窗标题、
+ * 完成/失败的 toast）描述的是**发生了什么**（打上游补元数据），不是按钮名，故保持原样。
+ *
  * 批量选择开着 → 「刮削选中（N）」。**N 取 `pickedCountDisplay`**（不是 `picked.size`）：
  * 整分类态下台上那几部勾是**排除集**，真正要刮的是「整档减掉排队的那些」，
  * 直接报 `picked.size` 会说成「刮削选中（3）」而实际要跑 85 部。
@@ -751,7 +755,7 @@ const onlineProgress = ref<{ done: number; total: number } | null>(null);
 const onlineScrapeLabel = computed(() => {
   if (!onlineScraping.value) {
     const n = pickedCountDisplay.value;
-    if (n <= 0) return "在线刮削";
+    if (n <= 0) return "开始刮削";
     if (wholeCategoryOn.value) return `刮削选中（${category.value} ${n}）`;
     return `刮削选中（${n}）`;
   }
@@ -759,6 +763,36 @@ const onlineScrapeLabel = computed(() => {
   if (p && p.total > 0) return `刮削中… (${p.done}/${p.total})`;
   if (submittedCount.value > 0) return `刮削中… (0/${submittedCount.value})`;
   return "刮削中…";
+});
+
+/**
+ * 手机端那两颗**图标**按钮上的角标：批量选择已选几部（整分类态下是整档的部数）。
+ *
+ * 手机上页头栏占两行、吸顶之后海报可见区域太小，用户 2026-10-30 要求把
+ * 「批量选择 / 在线刮削」缩成图标浮在右上角 —— 文字标签放不下之后，
+ * 「已选 3 部」这类信息只能靠角标顶替。0 时给空串（角标不渲染）。
+ */
+const pickedBadge = computed(() => {
+  const n = pickedCountDisplay.value;
+  return n > 0 ? String(n) : "";
+});
+
+/**
+ * 手机端「在线刮削」图标上的角标：**只在刮削中**显示 `8/128`，其余时候留空。
+ *
+ * 分工：「已选几部」归左边的批量选择图标（`pickedBadge`），这颗只管**进度** ——
+ * 两个角标同时冒同一个数字（「3」「3」）只是噪声。
+ *
+ * ⚠️ 进度优先取 `onlineProgress`（实时），没有时才回落到 `submittedCount`
+ * （提交那一刻冻结的部数）：起任务到第一轮轮询回来之间有两三秒空白，
+ * 那几秒不写点什么，用户会以为按钮没反应。与 `onlineScrapeLabel` 同一套优先级。
+ */
+const onlineScrapeBadge = computed(() => {
+  if (!onlineScraping.value) return "";
+  const p = onlineProgress.value;
+  if (p && p.total > 0) return `${p.done}/${p.total}`;
+  if (submittedCount.value > 0) return `0/${submittedCount.value}`;
+  return "";
 });
 
 /**
@@ -1473,6 +1507,10 @@ defineExpose({
   batchMode: computed(() => batchMode.value),
   batchModeLabel,
   pickedCount: computed(() => picked.value.size),
+  // 手机端那两颗图标按钮上的角标（2026-10-30）：文字标签放不下之后，
+  // 「已选 3 部 / 8/128」只能靠角标表达。
+  pickedBadge,
+  onlineScrapeBadge,
   toggleBatchMode,
   onlineScrapeDisabled,
   // 整分类那档（2026-10-19）：按钮上的部数现在要按「整档 / 整档减几部」算，
@@ -1795,7 +1833,10 @@ defineExpose({
 .jav-wall__grid--thumb { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
 @media (max-width: 1280px) { .jav-wall__grid--thumb { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .jav-wall__grid--thumb { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@media (max-width: 640px) { .jav-wall__grid--thumb { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* 手机上缩略图一排只放一张（用户 2026-10-30 要求）：两列时每张才 170px 宽、
+   横版封面只有 115px 高，番号和标题都跟着挤没了。只动列数，封面仍是 3:2 原图，
+   海报图视图（auto-fill 140px）与桌面各档断点一概不动。 */
+@media (max-width: 640px) { .jav-wall__grid--thumb { grid-template-columns: minmax(0, 1fr); } }
 
 .jav-wall__grid--poster { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 14px; }
 
